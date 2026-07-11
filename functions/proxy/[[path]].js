@@ -123,6 +123,30 @@ export async function onRequest(context) {
         return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
     }
 
+    // 针对有防盗链的站点计算合适的 Referer。
+    // 豆瓣图床（doubanio.com / douban.com）无 Referer 或错误 Referer 会返回 418。
+    function getRefererForTarget(targetUrl, fallback) {
+        try {
+            const host = new URL(targetUrl).hostname;
+            if (host.endsWith('douban.com') || host.endsWith('doubanio.com')) {
+                return 'https://m.douban.com/';
+            }
+            return fallback || new URL(targetUrl).origin;
+        } catch (e) {
+            return fallback || '';
+        }
+    }
+
+    // 判断是否是二进制媒体类型（图片/视频/音频等），这类内容不能按文本读取，否则会损坏
+    function isBinaryMediaType(contentType) {
+        if (!contentType) return false;
+        const ct = contentType.toLowerCase();
+        if (ct.includes('mpegurl')) return false; // m3u8 需按文本处理
+        return ct.startsWith('image/') || ct.startsWith('video/') ||
+               ct.startsWith('audio/') || ct.startsWith('font/') ||
+               ct.includes('application/octet-stream');
+    }
+
     // 获取 URL 的基础路径 (用于解析相对路径)
     function getBaseUrl(urlStr) {
         try {
@@ -179,8 +203,8 @@ export async function onRequest(context) {
             'Accept': '*/*',
             // 尝试传递一些原始请求的头信息
             'Accept-Language': request.headers.get('Accept-Language') || 'zh-CN,zh;q=0.9,en;q=0.8',
-            // 尝试设置 Referer 为目标网站的域名，或者传递原始 Referer
-            'Referer': request.headers.get('Referer') || new URL(targetUrl).origin
+            // 豆瓣图床走 m.douban.com，其它站点沿用原始 Referer 或目标域名
+            'Referer': getRefererForTarget(targetUrl, request.headers.get('Referer'))
         });
 
         try {
@@ -195,11 +219,19 @@ export async function onRequest(context) {
                  throw new Error(`HTTP error ${response.status}: ${response.statusText}. URL: ${targetUrl}. Body: ${errorBody.substring(0, 150)}`);
             }
 
+            const contentType = response.headers.get('Content-Type') || '';
+
+            // 二进制媒体（图片/视频/音频等）直接返回字节，避免按文本读取导致损坏
+            if (isBinaryMediaType(contentType)) {
+                const binaryBody = await response.arrayBuffer();
+                logDebug(`二进制内容: ${targetUrl}, Content-Type: ${contentType}, 字节数: ${binaryBody.byteLength}`);
+                return { content: '', contentType, responseHeaders: response.headers, binaryBody };
+            }
+
             // 读取响应内容为文本
             const content = await response.text();
-            const contentType = response.headers.get('Content-Type') || '';
             logDebug(`请求成功: ${targetUrl}, Content-Type: ${contentType}, 内容长度: ${content.length}`);
-            return { content, contentType, responseHeaders: response.headers }; // 同时返回原始响应头
+            return { content, contentType, responseHeaders: response.headers, binaryBody: null }; // 同时返回原始响应头
 
         } catch (error) {
              logDebug(`请求彻底失败: ${targetUrl}: ${error.message}`);
@@ -465,7 +497,16 @@ export async function onRequest(context) {
         }
 
         // --- 实际请求 ---
-        const { content, contentType, responseHeaders } = await fetchContentWithType(targetUrl);
+        const { content, contentType, responseHeaders, binaryBody } = await fetchContentWithType(targetUrl);
+
+        // --- 二进制媒体（豆瓣图片等）直接透传，不做 M3U8/文本处理，也不写 KV ---
+        if (binaryBody) {
+            logDebug(`返回二进制媒体内容: ${targetUrl}, 类型: ${contentType}`);
+            const finalHeaders = new Headers();
+            finalHeaders.set('Content-Type', contentType || 'application/octet-stream');
+            finalHeaders.set('Cache-Control', `public, max-age=${CACHE_TTL}`);
+            return createResponse(binaryBody, 200, finalHeaders);
+        }
 
         // --- 写入缓存 (KV) ---
         if (kvNamespace) {

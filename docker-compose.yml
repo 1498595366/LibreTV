@@ -1,7 +1,10 @@
 version: '3'
 services:
   libretv:
-    image: bestzwei/libretv:latest
+    # 从本地 Dockerfile 构建，确保本地修改过的 nginx.conf / proxy.lua 生效
+    # （之前直接用远程镜像 bestzwei/libretv:latest，本地的防盗链修复不会被部署）
+    build: .
+    image: libretv:local
     container_name: libretv
     ports:
       - "8899:80"

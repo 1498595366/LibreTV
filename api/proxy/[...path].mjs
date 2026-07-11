@@ -135,14 +135,38 @@ function getRandomUserAgent() {
     return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
+// 针对有防盗链的站点计算合适的 Referer。
+// 豆瓣图床（doubanio.com / douban.com）无 Referer 或错误 Referer 会返回 418。
+function getRefererForTarget(targetUrl, fallback) {
+    try {
+        const host = new URL(targetUrl).hostname;
+        if (host.endsWith('douban.com') || host.endsWith('doubanio.com')) {
+            return 'https://m.douban.com/';
+        }
+        return fallback || new URL(targetUrl).origin;
+    } catch (e) {
+        return fallback || '';
+    }
+}
+
+// 判断是否是二进制媒体类型（图片/视频/音频等），这类内容不能按文本读取，否则会损坏
+function isBinaryMediaType(contentType) {
+    if (!contentType) return false;
+    const ct = contentType.toLowerCase();
+    if (ct.includes('mpegurl')) return false; // m3u8 需按文本处理
+    return ct.startsWith('image/') || ct.startsWith('video/') ||
+           ct.startsWith('audio/') || ct.startsWith('font/') ||
+           ct.includes('application/octet-stream');
+}
+
 async function fetchContentWithType(targetUrl, requestHeaders) {
     // 准备请求头
     const headers = {
         'User-Agent': getRandomUserAgent(),
         'Accept': requestHeaders['accept'] || '*/*', // 传递原始 Accept 头（如果有）
         'Accept-Language': requestHeaders['accept-language'] || 'zh-CN,zh;q=0.9,en;q=0.8',
-        // 尝试设置一个合理的 Referer
-        'Referer': requestHeaders['referer'] || new URL(targetUrl).origin,
+        // 豆瓣图床走 m.douban.com，其它站点沿用原始 Referer 或目标域名
+        'Referer': getRefererForTarget(targetUrl, requestHeaders['referer']),
     };
     // 清理空值的头
     Object.keys(headers).forEach(key => headers[key] === undefined || headers[key] === null || headers[key] === '' ? delete headers[key] : {});
@@ -163,12 +187,20 @@ async function fetchContentWithType(targetUrl, requestHeaders) {
             throw err; // 抛出错误
         }
 
+        const contentType = response.headers.get('content-type') || '';
+
+        // 二进制媒体（图片/视频/音频等）直接返回字节，避免按文本读取导致损坏
+        if (isBinaryMediaType(contentType)) {
+            const binaryBody = Buffer.from(await response.arrayBuffer());
+            logDebug(`二进制内容: ${targetUrl}, Content-Type: ${contentType}, 字节数: ${binaryBody.length}`);
+            return { content: '', contentType, responseHeaders: response.headers, binaryBody };
+        }
+
         // 读取响应内容
         const content = await response.text();
-        const contentType = response.headers.get('content-type') || '';
         logDebug(`请求成功: ${targetUrl}, Content-Type: ${contentType}, 内容长度: ${content.length}`);
         // 返回结果
-        return { content, contentType, responseHeaders: response.headers };
+        return { content, contentType, responseHeaders: response.headers, binaryBody: null };
 
     } catch (error) {
         // 捕获 fetch 本身的错误（网络、超时等）或上面抛出的 HTTP 错误
@@ -367,7 +399,24 @@ export default async function handler(req, res) {
         console.info(`开始处理目标 URL 的代理请求: ${targetUrl}`);
 
         // --- 获取并处理目标内容 ---
-        const { content, contentType, responseHeaders } = await fetchContentWithType(targetUrl, req.headers);
+        const { content, contentType, responseHeaders, binaryBody } = await fetchContentWithType(targetUrl, req.headers);
+
+        // --- 二进制媒体（豆瓣图片等）直接透传，不做 M3U8/文本处理 ---
+        if (binaryBody) {
+            console.info(`直接返回二进制媒体内容: ${targetUrl}, 类型: ${contentType}`);
+            responseHeaders.forEach((value, key) => {
+                const lowerKey = key.toLowerCase();
+                if (!lowerKey.startsWith('access-control-') &&
+                    lowerKey !== 'content-encoding' && // node-fetch 已解压
+                    lowerKey !== 'content-length') {   // 长度可能已改变
+                    res.setHeader(key, value);
+                }
+            });
+            res.setHeader('Content-Type', contentType || 'application/octet-stream');
+            res.setHeader('Cache-Control', `public, max-age=${CACHE_TTL}`);
+            res.status(200).send(binaryBody); // Buffer，二进制安全
+            return;
+        }
 
         // --- 如果是 M3U8，处理并返回 ---
         if (isM3u8Content(content, contentType)) {

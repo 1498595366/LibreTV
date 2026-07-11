@@ -86,12 +86,37 @@ function rewriteUrlToProxy(targetUrl) {
 
 function getRandomUserAgent() { return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]; }
 
+// 针对有防盗链的站点计算合适的 Referer。
+// 豆瓣图床（doubanio.com / douban.com）无 Referer 或错误 Referer 会返回 418。
+function getRefererForTarget(targetUrl, fallback) {
+    try {
+        const host = new URL(targetUrl).hostname;
+        if (host.endsWith('douban.com') || host.endsWith('doubanio.com')) {
+            return 'https://m.douban.com/';
+        }
+        return fallback || new URL(targetUrl).origin;
+    } catch (e) {
+        return fallback || '';
+    }
+}
+
+// 判断是否是二进制媒体类型（图片/视频/音频等），这类内容不能按文本读取，否则会损坏
+function isBinaryMediaType(contentType) {
+    if (!contentType) return false;
+    const ct = contentType.toLowerCase();
+    if (ct.includes('mpegurl')) return false; // m3u8 需按文本处理
+    return ct.startsWith('image/') || ct.startsWith('video/') ||
+           ct.startsWith('audio/') || ct.startsWith('font/') ||
+           ct.includes('application/octet-stream');
+}
+
 async function fetchContentWithType(targetUrl, requestHeaders) {
     const headers = {
         'User-Agent': getRandomUserAgent(),
         'Accept': requestHeaders['accept'] || '*/*',
         'Accept-Language': requestHeaders['accept-language'] || 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Referer': requestHeaders['referer'] || new URL(targetUrl).origin,
+        // 豆瓣图床走 m.douban.com，其它站点沿用原始 Referer 或目标域名
+        'Referer': getRefererForTarget(targetUrl, requestHeaders['referer']),
     };
     Object.keys(headers).forEach(key => headers[key] === undefined || headers[key] === null || headers[key] === '' ? delete headers[key] : {});
     logDebug(`Fetching target: ${targetUrl} with headers: ${JSON.stringify(headers)}`);
@@ -103,10 +128,16 @@ async function fetchContentWithType(targetUrl, requestHeaders) {
             const err = new Error(`HTTP error ${response.status}: ${response.statusText}. URL: ${targetUrl}. Body: ${errorBody.substring(0, 200)}`);
             err.status = response.status; throw err;
         }
-        const content = await response.text();
         const contentType = response.headers.get('content-type') || '';
+        // 二进制媒体（图片/视频/音频等）以 base64 返回，避免按文本读取导致损坏
+        if (isBinaryMediaType(contentType)) {
+            const binaryBody = Buffer.from(await response.arrayBuffer()).toString('base64');
+            logDebug(`Binary content: ${targetUrl}, Content-Type: ${contentType}`);
+            return { content: '', contentType, responseHeaders: response.headers, binaryBody };
+        }
+        const content = await response.text();
         logDebug(`Fetch success: ${targetUrl}, Content-Type: ${contentType}, Length: ${content.length}`);
-        return { content, contentType, responseHeaders: response.headers };
+        return { content, contentType, responseHeaders: response.headers, binaryBody: null };
     } catch (error) {
         logDebug(`Fetch exception for ${targetUrl}: ${error.message}`);
         throw new Error(`Failed to fetch target URL ${targetUrl}: ${error.message}`);
@@ -211,7 +242,29 @@ export const handler = async (event, context) => {
 
     try {
         // Fetch Original Content (Pass Netlify event headers)
-        const { content, contentType, responseHeaders } = await fetchContentWithType(targetUrl, event.headers);
+        const { content, contentType, responseHeaders, binaryBody } = await fetchContentWithType(targetUrl, event.headers);
+
+        // --- 二进制媒体（豆瓣图片等）直接透传，以 base64 返回 ---
+        if (binaryBody) {
+            logDebug(`Returning binary media content: ${targetUrl}, Type: ${contentType}`);
+            const netlifyHeaders = { ...corsHeaders };
+            responseHeaders.forEach((value, key) => {
+                const lowerKey = key.toLowerCase();
+                if (!lowerKey.startsWith('access-control-') &&
+                    lowerKey !== 'content-encoding' &&
+                    lowerKey !== 'content-length') {
+                    netlifyHeaders[key] = value;
+                }
+            });
+            netlifyHeaders['Content-Type'] = contentType || 'application/octet-stream';
+            netlifyHeaders['Cache-Control'] = `public, max-age=${CACHE_TTL}`;
+            return {
+                statusCode: 200,
+                headers: netlifyHeaders,
+                body: binaryBody,
+                isBase64Encoded: true, // 关键：告知 Netlify body 是 base64 编码的二进制
+            };
+        }
 
         // --- Process if M3U8 ---
         if (isM3u8Content(content, contentType)) {
