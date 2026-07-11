@@ -133,6 +133,20 @@ app.get('/proxy/:encodedUrl', async (req, res) => {
     const maxRetries = config.maxRetries;
     let retries = 0;
     
+    // 针对有防盗链的站点补充 Referer。豆瓣图床要求 Referer 为 https://m.douban.com/
+    const buildHeaders = () => {
+      const headers = { 'User-Agent': config.userAgent };
+      try {
+        const host = new URL(targetUrl).hostname;
+        if (host.endsWith('doubanio.com') || host.endsWith('douban.com')) {
+          headers['Referer'] = 'https://m.douban.com/';
+        }
+      } catch (e) {
+        // URL 解析失败时忽略，走默认头
+      }
+      return headers;
+    };
+
     const makeRequest = async () => {
       try {
         return await axios({
@@ -140,9 +154,7 @@ app.get('/proxy/:encodedUrl', async (req, res) => {
           url: targetUrl,
           responseType: 'stream',
           timeout: config.timeout,
-          headers: {
-            'User-Agent': config.userAgent
-          }
+          headers: buildHeaders()
         });
       } catch (error) {
         if (retries < maxRetries) {
