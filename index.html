@@ -200,22 +200,22 @@
                 <div class="w-full max-w-2xl">
                     <div class="flex items-stretch mb-3 h-14 shadow-lg rounded-lg overflow-hidden">
                         <!-- 首页按钮 -->
-                        <button onclick="resetToHome()" 
-                                class="w-20 sm:w-24 flex items-center justify-center bg-white text-black font-medium hover:bg-gray-200 transition-colors" 
+                        <button onclick="resetToHome()"
+                                class="w-20 sm:w-24 shrink-0 flex items-center justify-center bg-white text-black font-medium hover:bg-gray-200 transition-colors"
                                 aria-label="返回首页" title="返回首页">
                             首页
                         </button>
                         <!-- 搜索输入 -->
-                        <input type="text" 
-                               id="searchInput" 
-                               class="flex-1 bg-[#111] border-y border-[#333] text-white px-6 py-0 focus:outline-none transition-colors" 
+                        <input type="text"
+                               id="searchInput"
+                               class="flex-1 min-w-0 w-0 bg-[#111] border-y border-[#333] text-white px-6 py-0 focus:outline-none transition-colors"
                                placeholder="搜索你喜欢的视频..." 
                                autocomplete="off"
                                aria-label="视频搜索框"
                                oninput="toggleClearButton()">
                         <!-- 清空按钮 -->
-                        <button id="clearSearchInput" 
-                                class="flex pr-2 bg-[#111] border-y border-[#333] items-center justify-center text-gray-400 hover:text-white hidden"
+                        <button id="clearSearchInput"
+                                class="flex pr-2 bg-[#111] border-y border-[#333] items-center justify-center text-gray-400 hover:text-white shrink-0 hidden"
                                 onclick="clearSearchInput()"
                                 aria-label="清空搜索框"
                                 title="清空搜索框">
@@ -224,8 +224,8 @@
                             </svg>
                         </button>
                         <!-- 搜索按钮 -->
-                        <button onclick="search()" 
-                                class="w-20 sm:w-24 flex items-center justify-center bg-white text-black font-medium hover:bg-gray-200 transition-colors" 
+                        <button onclick="search()"
+                                class="w-20 sm:w-24 shrink-0 flex items-center justify-center bg-white text-black font-medium hover:bg-gray-200 transition-colors"
                                 aria-label="搜索按钮">
                             搜索
                         </button>
