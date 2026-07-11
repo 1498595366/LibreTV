@@ -38,6 +38,13 @@ ngx.log(ngx.STDERR, "代理请求: ", target_url)
 -- 设置目标URL变量供Nginx使用
 ngx.var.target_url = target_url
 
+-- 针对豆瓣图床补充 Referer，绕过防盗链（无/错误 Referer 会返回 418）
+local host = string.match(target_url, "^https?://([^/:]+)")
+if host and (string.find(host, "doubanio%.com$") or string.find(host, "douban%.com$")) then
+    ngx.var.proxy_referer = "https://m.douban.com/"
+    ngx.log(ngx.STDERR, "豆瓣资源，覆盖 Referer 为 https://m.douban.com/ : ", host)
+end
+
 ngx.log(ngx.DEBUG, "已设置 ngx.var.target_url: ", ngx.var.target_url)
 
 -- 继续执行Nginx配置的其余部分
