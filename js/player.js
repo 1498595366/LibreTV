@@ -86,6 +86,7 @@ let videoHasEnded = false; // 跟踪视频是否已经自然结束
 let userClickedPosition = null; // 记录用户点击的位置
 let progressSaveInterval = null; // 定期保存进度的计时器
 let currentVideoUrl = ''; // 记录当前实际的视频URL
+let shortcutHintTimeout = null; // 用于控制快捷键提示显示时间
 const isWebkit = (typeof window.webkitConvertPointFromNodeToPage === 'function')
 Artplayer.FULLSCREEN_WEB_IN_BODY = true;
 
@@ -237,6 +238,9 @@ function initializePageContent() {
         setupProgressBarPreciseClicks();
     }, 1000);
 
+    // 添加键盘快捷键事件监听（空格=暂停/播放，左右=快退/快进，上下=音量）
+    document.addEventListener('keydown', handleKeyboardShortcuts);
+
     // 添加页面离开事件监听，保存播放位置
     window.addEventListener('beforeunload', saveCurrentProgress);
 
@@ -265,6 +269,171 @@ function initializePageContent() {
             clearInterval(waitForVideo);
         }
     }, 200);
+}
+
+// 处理键盘快捷键
+function handleKeyboardShortcuts(e) {
+    // 忽略输入框中的按键事件
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    // Alt + 左箭头 = 上一集
+    if (e.altKey && e.key === 'ArrowLeft') {
+        if (currentEpisodeIndex > 0) {
+            playPreviousEpisode();
+            showShortcutHint('上一集', 'left');
+            e.preventDefault();
+        }
+        return;
+    }
+    // Alt + 右箭头 = 下一集
+    if (e.altKey && e.key === 'ArrowRight') {
+        if (currentEpisodeIndex < currentEpisodes.length - 1) {
+            playNextEpisode();
+            showShortcutHint('下一集', 'right');
+            e.preventDefault();
+        }
+        return;
+    }
+
+    // 空格 = 播放/暂停
+    if (e.key === ' ') {
+        if (art) {
+            art.toggle();
+            showShortcutHint('播放/暂停', 'play');
+            e.preventDefault();
+        }
+        return;
+    }
+
+    // f 键 = 切换全屏
+    if (e.key === 'f' || e.key === 'F') {
+        if (art) {
+            art.fullscreen = !art.fullscreen;
+            showShortcutHint('切换全屏', 'fullscreen');
+            e.preventDefault();
+        }
+        return;
+    }
+
+    // 无修饰键的方向键 = 快退/快进、调节音量
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+
+    if (e.key === 'ArrowLeft') {
+        if (art && art.currentTime > 5) {
+            art.currentTime -= 5;
+            showShortcutHint('快退', 'left');
+            e.preventDefault();
+        }
+    } else if (e.key === 'ArrowRight') {
+        if (art && art.currentTime < art.duration - 5) {
+            art.currentTime += 5;
+            showShortcutHint('快进', 'right');
+            e.preventDefault();
+        }
+    } else if (e.key === 'ArrowUp') {
+        if (art && art.volume < 1) {
+            art.volume += 0.1;
+            showShortcutHint('音量+', 'up');
+            e.preventDefault();
+        }
+    } else if (e.key === 'ArrowDown') {
+        if (art && art.volume > 0) {
+            art.volume -= 0.1;
+            showShortcutHint('音量-', 'down');
+            e.preventDefault();
+        }
+    }
+}
+
+// 显示快捷键提示
+function showShortcutHint(text, direction) {
+    const hintElement = document.getElementById('shortcutHint');
+    const textElement = document.getElementById('shortcutText');
+    const iconElement = document.getElementById('shortcutIcon');
+    if (!hintElement || !textElement || !iconElement) return;
+
+    if (shortcutHintTimeout) clearTimeout(shortcutHintTimeout);
+
+    textElement.textContent = text;
+    const paths = {
+        left: 'M15 19l-7-7 7-7',
+        right: 'M9 5l7 7-7 7',
+        up: 'M5 15l7-7 7 7',
+        down: 'M19 9l-7 7-7-7',
+        fullscreen: 'M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5',
+        play: 'M5 3l14 9-14 9V3z'
+    };
+    iconElement.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${paths[direction] || paths.play}"></path>`;
+
+    hintElement.classList.add('show');
+    shortcutHintTimeout = setTimeout(() => {
+        hintElement.classList.remove('show');
+    }, 2000);
+}
+
+// 移动端手势调节：左半屏上下滑=亮度，右半屏上下滑=音量
+function setupTouchGestures() {
+    if (!art || !art.video) return;
+    const container = document.getElementById('player');
+    if (!container) return;
+
+    let startX = 0, startY = 0, mode = null, startValue = 0;
+
+    // 亮度用黑色遮罩实现（网页层无法改系统屏幕亮度，只能做压暗模拟）
+    let overlay = document.getElementById('brightnessOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'brightnessOverlay';
+        overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;background:#000;opacity:0;pointer-events:none;z-index:10;';
+        container.appendChild(overlay);
+    }
+
+    container.addEventListener('touchstart', function (e) {
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        startX = t.clientX;
+        startY = t.clientY;
+        mode = null;
+        startValue = 0;
+    }, { passive: true });
+
+    container.addEventListener('touchmove', function (e) {
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        const dy = t.clientY - startY;
+        const dx = t.clientX - startX;
+
+        // 只有纵向滑动占主导时才进入调节模式
+        if (mode === null) {
+            if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx) * 1.3) {
+                const half = container.clientWidth / 2;
+                if (t.clientX < half) {
+                    mode = 'brightness';
+                    startValue = parseFloat(overlay.style.opacity) || 0;
+                } else {
+                    mode = 'volume';
+                    startValue = art.volume;
+                }
+            } else {
+                return;
+            }
+        }
+
+        if (mode) e.preventDefault(); // 阻止页面滚动
+
+        if (mode === 'brightness') {
+            const v = Math.min(0.8, Math.max(0, startValue + (-dy / 150)));
+            overlay.style.opacity = v;
+        } else if (mode === 'volume') {
+            const v = Math.min(1, Math.max(0, startValue + (-dy / 150)));
+            art.volume = v;
+        }
+    }, { passive: false });
+
+    container.addEventListener('touchend', function () {
+        mode = null;
+        startValue = 0;
+    });
 }
 
 // 初始化播放器
@@ -341,6 +510,7 @@ function initPlayer(videoUrl) {
         lang: navigator.language.toLowerCase(),
         moreVideoAttr: {
             crossOrigin: 'anonymous',
+            preload: 'auto', // 播放器层面预加载：尽早开始拉流
         },
         customType: {
             m3u8: function (video, url) {
@@ -382,6 +552,15 @@ function initPlayer(videoUrl) {
 
                 hls.loadSource(url);
                 hls.attachMedia(video);
+
+                // 暂停时不停止下载：让 hls.js 继续预缓存后续分片，
+                // 暂停期间缓冲在后台填充，恢复播放即可秒开（播放器层面的缓存预加载）。
+                video.addEventListener('pause', function () {
+                    try {
+                        if (hls && hls.startLoad) hls.startLoad();
+                    } catch (e) {
+                    }
+                });
 
                 hls.on(Hls.Events.MANIFEST_PARSED, function () {
                     video.play().catch(e => {
@@ -450,6 +629,9 @@ function initPlayer(videoUrl) {
                 });
         }
     });
+
+    // 移动端手势：左半屏上下滑调亮度，右半屏上下滑调音量
+    setupTouchGestures();
 
     art.on('video:loadedmetadata', function() {
         document.getElementById('loading').style.display = 'none';
