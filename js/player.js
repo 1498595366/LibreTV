@@ -89,17 +89,6 @@ let currentVideoUrl = ''; // 记录当前实际的视频URL
 const isWebkit = (typeof window.webkitConvertPointFromNodeToPage === 'function')
 Artplayer.FULLSCREEN_WEB_IN_BODY = true;
 
-// 将直连视频地址包装为走 /proxy 代理的地址。
-// 借助代理返回的 Cache-Control 缓存分片，提升回看/回退速度；
-// 仅 m3u8（http/https 开头）走代理，直连大文件（如整段 mp4）不代理，
-// 避免单文件超过 Netlify 函数响应体上限。
-function toProxyUrl(rawUrl) {
-    if (!rawUrl || !/^https?:\/\//i.test(rawUrl) || rawUrl.startsWith('/proxy/')) {
-        return rawUrl;
-    }
-    return PROXY_URL + encodeURIComponent(rawUrl);
-}
-
 // 页面加载
 document.addEventListener('DOMContentLoaded', function () {
     // 先检查用户是否已通过密码验证
@@ -280,9 +269,6 @@ function initializePageContent() {
 
 // 初始化播放器
 function initPlayer(videoUrl) {
-    // 视频走 /proxy 代理：借助代理返回的 Cache-Control 缓存分片，提升回看/回退速度
-    videoUrl = toProxyUrl(videoUrl);
-
     if (!videoUrl) {
         return
     }
@@ -351,9 +337,11 @@ function initPlayer(videoUrl) {
         autoPlayback: false,
         airplay: false,
         hotkey: false,
-        mobileNativeControls: true,
         theme: '#23ade5',
         lang: navigator.language.toLowerCase(),
+        moreVideoAttr: {
+            crossOrigin: 'anonymous',
+        },
         customType: {
             m3u8: function (video, url) {
                 // 清理之前的HLS实例
@@ -690,7 +678,7 @@ function playEpisode(index) {
     if (isWebkit) {
         initPlayer(url);
     } else {
-        art.switch = toProxyUrl(url);
+        art.switch = url;
     }
 
     // 更新UI
