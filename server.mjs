@@ -116,6 +116,63 @@ function isValidUrl(urlString) {
   }
 }
 
+// --- M3U8 代理重写：让本地 server.mjs 与部署的 Netlify 代理行为一致 ---
+// 把 m3u8 里的分片/子列表/密钥/初始化段 URI 全部重写为 /proxy 路径，
+// 这样前端 hls.js 经本地代理拉流时相对路径才能正确解析，且分片可被浏览器缓存。
+function getBaseUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
+    const parts = parsed.pathname.split('/');
+    parts.pop();
+    return `${parsed.origin}${parts.join('/')}/`;
+  } catch (e) {
+    return urlStr.slice(0, urlStr.lastIndexOf('/') + 1);
+  }
+}
+
+function resolveUrl(baseUrl, relativeUrl) {
+  if (!relativeUrl) return '';
+  if (/^https?:\/\//i.test(relativeUrl)) return relativeUrl;
+  try {
+    return new URL(relativeUrl, baseUrl).toString();
+  } catch (e) {
+    return relativeUrl.startsWith('/') ? new URL(baseUrl).origin + relativeUrl : baseUrl.replace(/\/[^/]*$/, '/') + relativeUrl;
+  }
+}
+
+function rewriteUrlToProxy(targetUrl) {
+  return '/proxy/' + encodeURIComponent(targetUrl);
+}
+
+function processM3u8Content(targetUrl, content) {
+  const baseUrl = getBaseUrl(targetUrl);
+  const lines = content.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line && i === lines.length - 1) { out.push(line); continue; }
+    if (!line) continue;
+
+    if (line.startsWith('#EXT-X-KEY') || line.startsWith('#EXT-X-MAP')) {
+      out.push(line.replace(/URI="([^"]+)"/, (m, uri) => `URI="${rewriteUrlToProxy(resolveUrl(baseUrl, uri))}"`));
+      continue;
+    }
+    if (line.startsWith('#EXT-X-MEDIA')) {
+      out.push(line.replace(/URI="([^"]+)"/, (m, uri) => {
+        const abs = resolveUrl(baseUrl, uri);
+        return (abs && /^https?:\/\//i.test(abs)) ? `URI="${rewriteUrlToProxy(abs)}"` : m;
+      }));
+      continue;
+    }
+    if (line.startsWith('#')) { out.push(line); continue; }
+
+    // 变体 URI（master 播放列表）或分片 URI（media 播放列表）都重写为代理路径；
+    // 保留全部档位，前端 hls.js 自行做自适应码率。
+    out.push(rewriteUrlToProxy(resolveUrl(baseUrl, line)));
+  }
+  return out.join('\n');
+}
+
 // 代理路由
 app.get('/proxy/:encodedUrl', async (req, res) => {
   try {
@@ -171,12 +228,33 @@ app.get('/proxy/:encodedUrl', async (req, res) => {
     // 转发响应头（过滤敏感头）
     const headers = { ...response.headers };
     const sensitiveHeaders = (
-      process.env.FILTERED_HEADERS || 
+      process.env.FILTERED_HEADERS ||
       'content-security-policy,cookie,set-cookie,x-frame-options,access-control-allow-origin'
     ).split(',');
-    
+
     sensitiveHeaders.forEach(header => delete headers[header]);
+
+    const contentType = headers['content-type'] || headers['Content-Type'] || '';
+    const isM3u8 = /mpegurl/i.test(contentType) || /\.m3u8(\?|$)/i.test(targetUrl);
+    const isMedia = /^(video|audio|image)\//i.test(contentType) || /\.(ts|mp4|webm|mp3|jpg|jpeg|png|webp)(\?|$)/i.test(targetUrl);
+
+    // M3U8：读取文本、重写分片/子列表 URI 为 /proxy 路径，并允许缓存
+    if (isM3u8) {
+      let raw = '';
+      for await (const chunk of response.data) raw += chunk.toString('utf8');
+      const processed = processM3u8Content(targetUrl, raw);
+      res.set(headers);
+      res.set('Content-Type', 'application/vnd.apple.mpegurl');
+      res.set('Cache-Control', 'public, max-age=86400');
+      res.send(processed);
+      return;
+    }
+
+    // 非 M3U8：透传响应流；媒体类内容（图片/音视频分片等）允许缓存
     res.set(headers);
+    if (isMedia) {
+      res.set('Cache-Control', 'public, max-age=86400');
+    }
 
     // 管道传输响应流
     response.data.pipe(res);

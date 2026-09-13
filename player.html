@@ -255,16 +255,6 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 012-2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
                         </svg>
                     </button>
-                    
-                    <!-- 锁定控制按钮 - 始终显示在最右侧 -->
-                    <button id="lockToggle" onclick="toggleControlsLock()" title="锁定控制" 
-                            class="px-2 py-1 bg-[#222] hover:bg-[#333] border border-[#333] text-white rounded-lg transition flex-shrink-0">
-                        <svg id="lockIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <!-- 默认状态：未锁图标 -->
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M15 11V7a3 3 0 00-6 0v4m-3 4h12v6H6v-6z" />
-                        </svg>
-                    </button>
                 </div>
             </div>
         </div>
@@ -279,14 +269,6 @@
             </div>
         </div>
     </main>
-
-    <!-- 添加快捷键提示元素 -->
-    <div class="shortcut-hint" id="shortcutHint">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" id="shortcutIcon">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
-        </svg>
-        <span id="shortcutText"></span>
-    </div>
 
     <!-- 页脚区域 -->
     <footer class="footer mt-2 py-6 border-t border-[#333] bg-[#0a0a0a]">

@@ -341,108 +341,40 @@ export async function onRequest(context) {
             throw new Error(`处理主列表时递归层数过多 (${MAX_RECURSION}): ${url}`);
         }
 
+        // 保留全部清晰度档位，仅把每个子播放列表 URI（及 #EXT-X-MEDIA 的音/字幕 URI）
+        // 重写为 /proxy 路径，由前端 hls.js 自行做自适应码率(ABR)切换。
+        // 不再收敛到单个最高带宽档，避免弱网被强制拉最高码率导致卡顿。
         const baseUrl = getBaseUrl(url);
         const lines = content.split('\n');
-        let highestBandwidth = -1;
-        let bestVariantUrl = '';
+        const output = [];
 
         for (let i = 0; i < lines.length; i++) {
-            if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
-                const bandwidthMatch = lines[i].match(/BANDWIDTH=(\d+)/);
-                const currentBandwidth = bandwidthMatch ? parseInt(bandwidthMatch[1], 10) : 0;
-
-                 let variantUriLine = '';
-                 for (let j = i + 1; j < lines.length; j++) {
-                     const line = lines[j].trim();
-                     if (line && !line.startsWith('#')) {
-                         variantUriLine = line;
-                         i = j;
-                         break;
-                     }
-                 }
-
-                 if (variantUriLine && currentBandwidth >= highestBandwidth) {
-                     highestBandwidth = currentBandwidth;
-                     bestVariantUrl = resolveUrl(baseUrl, variantUriLine);
-                 }
+            const line = lines[i].trim();
+            if (!line && i === lines.length - 1) {
+                output.push(line);
+                continue;
             }
-        }
+            if (!line) continue;
 
-         if (!bestVariantUrl) {
-             logDebug(`主列表中未找到 BANDWIDTH 或 STREAM-INF，尝试查找第一个子列表引用: ${url}`);
-             for (let i = 0; i < lines.length; i++) {
-                 const line = lines[i].trim();
-                 if (line && !line.startsWith('#') && (line.endsWith('.m3u8') || line.includes('.m3u8?'))) { // 修复：检查是否包含 .m3u8?
-                    bestVariantUrl = resolveUrl(baseUrl, line);
-                     logDebug(`备选方案：找到第一个子列表引用: ${bestVariantUrl}`);
-                     break;
-                 }
-             }
-         }
-
-        if (!bestVariantUrl) {
-            logDebug(`在主列表 ${url} 中未找到任何有效的子播放列表 URL。可能格式有问题或仅包含音频/字幕。将尝试按媒体列表处理原始内容。`);
-            return processMediaPlaylist(url, content);
-        }
-
-        // --- 获取并处理选中的子 M3U8 ---
-
-        const cacheKey = `m3u8_processed:${bestVariantUrl}`; // 使用处理后的缓存键
-
-        let kvNamespace = null;
-        try {
-            kvNamespace = env.LIBRETV_PROXY_KV; // 从环境获取 KV 命名空间 (变量名在 Cloudflare 设置)
-            if (!kvNamespace) throw new Error("KV 命名空间未绑定");
-        } catch (e) {
-            logDebug(`KV 命名空间 'LIBRETV_PROXY_KV' 访问出错或未绑定: ${e.message}`);
-            kvNamespace = null; // 确保设为 null
-        }
-
-        if (kvNamespace) {
-            try {
-                const cachedContent = await kvNamespace.get(cacheKey);
-                if (cachedContent) {
-                    logDebug(`[缓存命中] 主列表的子列表: ${bestVariantUrl}`);
-                    return cachedContent;
-                } else {
-                    logDebug(`[缓存未命中] 主列表的子列表: ${bestVariantUrl}`);
-                }
-            } catch (kvError) {
-                logDebug(`从 KV 读取缓存失败 (${cacheKey}): ${kvError.message}`);
-                // 出错则继续执行，不影响功能
+            if (line.startsWith('#EXT-X-MEDIA')) {
+                output.push(line.replace(/URI="([^"]+)"/, (match, uri) => {
+                    const abs = resolveUrl(baseUrl, uri);
+                    return (abs && abs.match(/^https?:\/\//i)) ? `URI="${rewriteUrlToProxy(abs)}"` : match;
+                }));
+                continue;
             }
+
+            if (line.startsWith('#')) {
+                output.push(line);
+                continue;
+            }
+
+            const absoluteUrl = resolveUrl(baseUrl, line);
+            logDebug(`重写子列表 URI: 原始='${line}', 绝对='${absoluteUrl}'`);
+            output.push(rewriteUrlToProxy(absoluteUrl));
         }
 
-        logDebug(`选择的子列表 (带宽: ${highestBandwidth}): ${bestVariantUrl}`);
-        const { content: variantContent, contentType: variantContentType } = await fetchContentWithType(bestVariantUrl);
-
-        if (!isM3u8Content(variantContent, variantContentType)) {
-            logDebug(`获取到的子列表 ${bestVariantUrl} 不是 M3U8 内容 (类型: ${variantContentType})。可能直接是媒体文件，返回原始内容。`);
-             // 如果不是M3U8，但看起来像媒体内容，直接返回代理后的内容
-             // 注意：这里可能需要决定是否直接代理这个非 M3U8 的 URL
-             // 为了简化，我们假设如果不是 M3U8，则流程中断或按原样处理
-             // 或者，尝试将其作为媒体列表处理？（当前行为）
-             // return createResponse(variantContent, 200, { 'Content-Type': variantContentType || 'application/octet-stream' });
-             // 尝试按媒体列表处理，以防万一
-             return processMediaPlaylist(bestVariantUrl, variantContent);
-
-        }
-
-        const processedVariant = await processM3u8Content(bestVariantUrl, variantContent, recursionDepth + 1, env);
-
-        if (kvNamespace) {
-             try {
-                 // 使用 waitUntil 异步写入缓存，不阻塞响应返回
-                 // 注意 KV 的写入限制 (免费版每天 1000 次)
-                 waitUntil(kvNamespace.put(cacheKey, processedVariant, { expirationTtl: CACHE_TTL }));
-                 logDebug(`已将处理后的子列表写入缓存: ${bestVariantUrl}`);
-             } catch (kvError) {
-                 logDebug(`向 KV 写入缓存失败 (${cacheKey}): ${kvError.message}`);
-                 // 写入失败不影响返回结果
-             }
-        }
-
-        return processedVariant;
+        return output.join('\n');
     }
 
     // --- 主要请求处理逻辑 ---

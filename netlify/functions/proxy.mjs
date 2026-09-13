@@ -169,14 +169,27 @@ async function processM3u8Content(targetUrl, content, recursionDepth = 0) {
 }
 async function processMasterPlaylist(url, content, recursionDepth) {
     if (recursionDepth > MAX_RECURSION) { throw new Error(`Max recursion depth (${MAX_RECURSION}) exceeded for master playlist: ${url}`); }
-    const baseUrl = getBaseUrl(url); const lines = content.split('\n'); let highestBandwidth = -1; let bestVariantUrl = '';
-    for (let i = 0; i < lines.length; i++) { if (lines[i].startsWith('#EXT-X-STREAM-INF')) { const bandwidthMatch = lines[i].match(/BANDWIDTH=(\d+)/); const currentBandwidth = bandwidthMatch ? parseInt(bandwidthMatch[1], 10) : 0; let variantUriLine = ''; for (let j = i + 1; j < lines.length; j++) { const line = lines[j].trim(); if (line && !line.startsWith('#')) { variantUriLine = line; i = j; break; } } if (variantUriLine && currentBandwidth >= highestBandwidth) { highestBandwidth = currentBandwidth; bestVariantUrl = resolveUrl(baseUrl, variantUriLine); } } }
-    if (!bestVariantUrl) { logDebug(`No BANDWIDTH found, trying first URI in: ${url}`); for (let i = 0; i < lines.length; i++) { const line = lines[i].trim(); if (line && !line.startsWith('#') && line.match(/\.m3u8($|\?.*)/i)) { bestVariantUrl = resolveUrl(baseUrl, line); logDebug(`Fallback: Found first sub-playlist URI: ${bestVariantUrl}`); break; } } }
-    if (!bestVariantUrl) { logDebug(`No valid sub-playlist URI found in master: ${url}. Processing as media playlist.`); return processMediaPlaylist(url, content); }
-    logDebug(`Selected sub-playlist (Bandwidth: ${highestBandwidth}): ${bestVariantUrl}`);
-    const { content: variantContent, contentType: variantContentType } = await fetchContentWithType(bestVariantUrl, {});
-    if (!isM3u8Content(variantContent, variantContentType)) { logDebug(`Fetched sub-playlist ${bestVariantUrl} is not M3U8 (Type: ${variantContentType}). Treating as media playlist.`); return processMediaPlaylist(bestVariantUrl, variantContent); }
-    return await processM3u8Content(bestVariantUrl, variantContent, recursionDepth + 1);
+    // 保留全部清晰度档位，仅把每个子播放列表 URI（及 #EXT-X-MEDIA 的音/字幕 URI）
+    // 重写为 /proxy 路径，由前端 hls.js 自行做自适应码率(ABR)切换。
+    // 不再收敛到单个最高带宽档，避免弱网被强制拉最高码率导致卡顿。
+    const baseUrl = getBaseUrl(url); const lines = content.split('\n'); const output = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line && i === lines.length - 1) { output.push(line); continue; }
+        if (!line) continue;
+        if (line.startsWith('#EXT-X-MEDIA')) {
+            output.push(line.replace(/URI="([^"]+)"/, (match, uri) => {
+                const abs = resolveUrl(baseUrl, uri);
+                return (abs && abs.match(/^https?:\/\//i)) ? `URI="${rewriteUrlToProxy(abs)}"` : match;
+            }));
+            continue;
+        }
+        if (line.startsWith('#')) { output.push(line); continue; }
+        const absoluteUrl = resolveUrl(baseUrl, line);
+        logDebug(`Rewriting variant: Original='${line}', Resolved='${absoluteUrl}'`);
+        output.push(rewriteUrlToProxy(absoluteUrl));
+    }
+    return output.join('\n');
 }
 
 

@@ -84,12 +84,21 @@ let episodesReversed = false;
 let autoplayEnabled = true; // 默认开启自动连播
 let videoHasEnded = false; // 跟踪视频是否已经自然结束
 let userClickedPosition = null; // 记录用户点击的位置
-let shortcutHintTimeout = null; // 用于控制快捷键提示显示时间
-let adFilteringEnabled = true; // 默认开启广告过滤
 let progressSaveInterval = null; // 定期保存进度的计时器
 let currentVideoUrl = ''; // 记录当前实际的视频URL
 const isWebkit = (typeof window.webkitConvertPointFromNodeToPage === 'function')
 Artplayer.FULLSCREEN_WEB_IN_BODY = true;
+
+// 将直连视频地址包装为走 /proxy 代理的地址。
+// 借助代理返回的 Cache-Control 缓存分片，提升回看/回退速度；
+// 仅 m3u8（http/https 开头）走代理，直连大文件（如整段 mp4）不代理，
+// 避免单文件超过 Netlify 函数响应体上限。
+function toProxyUrl(rawUrl) {
+    if (!rawUrl || !/^https?:\/\//i.test(rawUrl) || rawUrl.startsWith('/proxy/')) {
+        return rawUrl;
+    }
+    return PROXY_URL + encodeURIComponent(rawUrl);
+}
 
 // 页面加载
 document.addEventListener('DOMContentLoaded', function () {
@@ -168,9 +177,6 @@ function initializePageContent() {
     autoplayEnabled = localStorage.getItem('autoplayEnabled') !== 'false'; // 默认为true
     document.getElementById('autoplayToggle').checked = autoplayEnabled;
 
-    // 获取广告过滤设置
-    adFilteringEnabled = localStorage.getItem(PLAYER_CONFIG.adFilteringStorage) !== 'false'; // 默认为true
-
     // 监听自动连播开关变化
     document.getElementById('autoplayToggle').addEventListener('change', function (e) {
         autoplayEnabled = e.target.checked;
@@ -242,9 +248,6 @@ function initializePageContent() {
         setupProgressBarPreciseClicks();
     }, 1000);
 
-    // 添加键盘快捷键事件监听
-    document.addEventListener('keydown', handleKeyboardShortcuts);
-
     // 添加页面离开事件监听，保存播放位置
     window.addEventListener('beforeunload', saveCurrentProgress);
 
@@ -275,123 +278,11 @@ function initializePageContent() {
     }, 200);
 }
 
-// 处理键盘快捷键
-function handleKeyboardShortcuts(e) {
-    // 忽略输入框中的按键事件
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
-    // Alt + 左箭头 = 上一集
-    if (e.altKey && e.key === 'ArrowLeft') {
-        if (currentEpisodeIndex > 0) {
-            playPreviousEpisode();
-            showShortcutHint('上一集', 'left');
-            e.preventDefault();
-        }
-    }
-
-    // Alt + 右箭头 = 下一集
-    if (e.altKey && e.key === 'ArrowRight') {
-        if (currentEpisodeIndex < currentEpisodes.length - 1) {
-            playNextEpisode();
-            showShortcutHint('下一集', 'right');
-            e.preventDefault();
-        }
-    }
-
-    // 左箭头 = 快退
-    if (!e.altKey && e.key === 'ArrowLeft') {
-        if (art && art.currentTime > 5) {
-            art.currentTime -= 5;
-            showShortcutHint('快退', 'left');
-            e.preventDefault();
-        }
-    }
-
-    // 右箭头 = 快进
-    if (!e.altKey && e.key === 'ArrowRight') {
-        if (art && art.currentTime < art.duration - 5) {
-            art.currentTime += 5;
-            showShortcutHint('快进', 'right');
-            e.preventDefault();
-        }
-    }
-
-    // 上箭头 = 音量+
-    if (e.key === 'ArrowUp') {
-        if (art && art.volume < 1) {
-            art.volume += 0.1;
-            showShortcutHint('音量+', 'up');
-            e.preventDefault();
-        }
-    }
-
-    // 下箭头 = 音量-
-    if (e.key === 'ArrowDown') {
-        if (art && art.volume > 0) {
-            art.volume -= 0.1;
-            showShortcutHint('音量-', 'down');
-            e.preventDefault();
-        }
-    }
-
-    // 空格 = 播放/暂停
-    if (e.key === ' ') {
-        if (art) {
-            art.toggle();
-            showShortcutHint('播放/暂停', 'play');
-            e.preventDefault();
-        }
-    }
-
-    // f 键 = 切换全屏
-    if (e.key === 'f' || e.key === 'F') {
-        if (art) {
-            art.fullscreen = !art.fullscreen;
-            showShortcutHint('切换全屏', 'fullscreen');
-            e.preventDefault();
-        }
-    }
-}
-
-// 显示快捷键提示
-function showShortcutHint(text, direction) {
-    const hintElement = document.getElementById('shortcutHint');
-    const textElement = document.getElementById('shortcutText');
-    const iconElement = document.getElementById('shortcutIcon');
-
-    // 清除之前的超时
-    if (shortcutHintTimeout) {
-        clearTimeout(shortcutHintTimeout);
-    }
-
-    // 设置文本和图标方向
-    textElement.textContent = text;
-
-    if (direction === 'left') {
-        iconElement.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>';
-    } else if (direction === 'right') {
-        iconElement.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
-    }  else if (direction === 'up') {
-        iconElement.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path>';
-    } else if (direction === 'down') {
-        iconElement.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>';
-    } else if (direction === 'fullscreen') {
-        iconElement.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"></path>';
-    } else if (direction === 'play') {
-        iconElement.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3l14 9-14 9V3z"></path>';
-    }
-
-    // 显示提示
-    hintElement.classList.add('show');
-
-    // 两秒后隐藏
-    shortcutHintTimeout = setTimeout(() => {
-        hintElement.classList.remove('show');
-    }, 2000);
-}
-
 // 初始化播放器
 function initPlayer(videoUrl) {
+    // 视频走 /proxy 代理：借助代理返回的 Cache-Control 缓存分片，提升回看/回退速度
+    videoUrl = toProxyUrl(videoUrl);
+
     if (!videoUrl) {
         return
     }
@@ -405,13 +296,13 @@ function initPlayer(videoUrl) {
     // 配置HLS.js选项
     const hlsConfig = {
         debug: false,
-        loader: adFilteringEnabled ? CustomHlsJsLoader : Hls.DefaultConfig.loader,
+        loader: Hls.DefaultConfig.loader,
         enableWorker: true,
         lowLatencyMode: false,
-        backBufferLength: 90,
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        maxBufferSize: 30 * 1000 * 1000,
+        backBufferLength: 30,
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        maxBufferSize: 90 * 1000 * 1000,
         maxBufferHole: 0.5,
         fragLoadingMaxRetry: 6,
         fragLoadingMaxRetryTimeout: 64000,
@@ -421,7 +312,7 @@ function initPlayer(videoUrl) {
         levelLoadingMaxRetry: 4,
         levelLoadingRetryDelay: 1000,
         startLevel: -1,
-        abrEwmaDefaultEstimate: 500000,
+        abrEwmaDefaultEstimate: 1500000,
         abrBandWidthFactor: 0.95,
         abrBandWidthUpFactor: 0.7,
         abrMaxWithRealBitrate: true,
@@ -441,10 +332,10 @@ function initPlayer(videoUrl) {
         isLive: false,
         muted: false,
         autoplay: true,
-        pip: true,
+        pip: false,
         autoSize: false,
-        autoMini: true,
-        screenshot: true,
+        autoMini: false,
+        screenshot: false,
         setting: true,
         loop: false,
         flip: false,
@@ -458,13 +349,11 @@ function initPlayer(videoUrl) {
         backdrop: true,
         playsInline: true,
         autoPlayback: false,
-        airplay: true,
+        airplay: false,
         hotkey: false,
+        mobileNativeControls: true,
         theme: '#23ade5',
         lang: navigator.language.toLowerCase(),
-        moreVideoAttr: {
-            crossOrigin: 'anonymous',
-        },
         customType: {
             m3u8: function (video, url) {
                 // 清理之前的HLS实例
@@ -505,20 +394,6 @@ function initPlayer(videoUrl) {
 
                 hls.loadSource(url);
                 hls.attachMedia(video);
-
-                // enable airplay, from https://github.com/video-dev/hls.js/issues/5989
-                // 检查是否已存在source元素，如果存在则更新，不存在则创建
-                let sourceElement = video.querySelector('source');
-                if (sourceElement) {
-                    // 更新现有source元素的URL
-                    sourceElement.src = videoUrl;
-                } else {
-                    // 创建新的source元素
-                    sourceElement = document.createElement('source');
-                    sourceElement.src = videoUrl;
-                    video.appendChild(sourceElement);
-                }
-                video.disableRemotePlayback = false;
 
                 hls.on(Hls.Events.MANIFEST_PARSED, function () {
                     video.play().catch(e => {
@@ -646,9 +521,6 @@ function initPlayer(videoUrl) {
         showError('视频播放失败: ' + (error.message || '未知错误'));
     });
 
-    // 添加移动端长按三倍速播放功能
-    setupLongPressSpeedControl();
-
     // 视频播放结束事件
     art.on('video:ended', function () {
         videoHasEnded = true;
@@ -665,17 +537,6 @@ function initPlayer(videoUrl) {
             }, 1000);
         } else {
             art.fullscreen = false;
-        }
-    });
-
-    // 添加双击全屏支持
-    art.on('video:playing', () => {
-        // 绑定双击事件到视频容器
-        if (art.video) {
-            art.video.addEventListener('dblclick', () => {
-                art.fullscreen = !art.fullscreen;
-                art.play();
-            });
         }
     });
 
@@ -696,51 +557,6 @@ function initPlayer(videoUrl) {
         }
     }, 10000);
 }
-
-// 自定义M3U8 Loader用于过滤广告
-class CustomHlsJsLoader extends Hls.DefaultConfig.loader {
-    constructor(config) {
-        super(config);
-        const load = this.load.bind(this);
-        this.load = function (context, config, callbacks) {
-            // 拦截manifest和level请求
-            if (context.type === 'manifest' || context.type === 'level') {
-                const onSuccess = callbacks.onSuccess;
-                callbacks.onSuccess = function (response, stats, context) {
-                    // 如果是m3u8文件，处理内容以移除广告分段
-                    if (response.data && typeof response.data === 'string') {
-                        // 过滤掉广告段 - 实现更精确的广告过滤逻辑
-                        response.data = filterAdsFromM3U8(response.data, true);
-                    }
-                    return onSuccess(response, stats, context);
-                };
-            }
-            // 执行原始load方法
-            load(context, config, callbacks);
-        };
-    }
-}
-
-// 过滤可疑的广告内容
-function filterAdsFromM3U8(m3u8Content, strictMode = false) {
-    if (!m3u8Content) return '';
-
-    // 按行分割M3U8内容
-    const lines = m3u8Content.split('\n');
-    const filteredLines = [];
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-
-        // 只过滤#EXT-X-DISCONTINUITY标识
-        if (!line.includes('#EXT-X-DISCONTINUITY')) {
-            filteredLines.push(line);
-        }
-    }
-
-    return filteredLines.join('\n');
-}
-
 
 // 显示错误
 function showError(message) {
@@ -874,7 +690,7 @@ function playEpisode(index) {
     if (isWebkit) {
         initPlayer(url);
     } else {
-        art.switch = url;
+        art.switch = toProxyUrl(url);
     }
 
     // 更新UI
@@ -1209,121 +1025,6 @@ function saveCurrentProgress() {
     }
 }
 
-// 设置移动端长按三倍速播放功能
-function setupLongPressSpeedControl() {
-    if (!art || !art.video) return;
-
-    const playerElement = document.getElementById('player');
-    let longPressTimer = null;
-    let originalPlaybackRate = 1.0;
-    let isLongPress = false;
-
-    // 显示快速提示
-    function showSpeedHint(speed) {
-        showShortcutHint(`${speed}倍速`, 'right');
-    }
-
-    // 禁用右键
-    playerElement.oncontextmenu = () => {
-        // 检测是否为移动设备
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-
-        // 只在移动设备上禁用右键
-        if (isMobile) {
-            const dplayerMenu = document.querySelector(".dplayer-menu");
-            const dplayerMask = document.querySelector(".dplayer-mask");
-            if (dplayerMenu) dplayerMenu.style.display = "none";
-            if (dplayerMask) dplayerMask.style.display = "none";
-            return false;
-        }
-        return true; // 在桌面设备上允许右键菜单
-    };
-
-    // 触摸开始事件
-    playerElement.addEventListener('touchstart', function (e) {
-        // 检查视频是否正在播放，如果没有播放则不触发长按功能
-        if (art.video.paused) {
-            return; // 视频暂停时不触发长按功能
-        }
-
-        // 保存原始播放速度
-        originalPlaybackRate = art.video.playbackRate;
-
-        // 设置长按计时器
-        longPressTimer = setTimeout(() => {
-            // 再次检查视频是否仍在播放
-            if (art.video.paused) {
-                clearTimeout(longPressTimer);
-                longPressTimer = null;
-                return;
-            }
-
-            // 长按超过500ms，设置为3倍速
-            art.video.playbackRate = 3.0;
-            isLongPress = true;
-            showSpeedHint(3.0);
-
-            // 只在确认为长按时阻止默认行为
-            e.preventDefault();
-        }, 500);
-    }, { passive: false });
-
-    // 触摸结束事件
-    playerElement.addEventListener('touchend', function (e) {
-        // 清除长按计时器
-        if (longPressTimer) {
-            clearTimeout(longPressTimer);
-            longPressTimer = null;
-        }
-
-        // 如果是长按状态，恢复原始播放速度
-        if (isLongPress) {
-            art.video.playbackRate = originalPlaybackRate;
-            isLongPress = false;
-            showSpeedHint(originalPlaybackRate);
-
-            // 阻止长按后的点击事件
-            e.preventDefault();
-        }
-        // 如果不是长按，则允许正常的点击事件（暂停/播放）
-    });
-
-    // 触摸取消事件
-    playerElement.addEventListener('touchcancel', function () {
-        // 清除长按计时器
-        if (longPressTimer) {
-            clearTimeout(longPressTimer);
-            longPressTimer = null;
-        }
-
-        // 如果是长按状态，恢复原始播放速度
-        if (isLongPress) {
-            art.video.playbackRate = originalPlaybackRate;
-            isLongPress = false;
-        }
-    });
-
-    // 触摸移动事件 - 防止在长按时触发页面滚动
-    playerElement.addEventListener('touchmove', function (e) {
-        if (isLongPress) {
-            e.preventDefault();
-        }
-    }, { passive: false });
-
-    // 视频暂停时取消长按状态
-    art.video.addEventListener('pause', function () {
-        if (isLongPress) {
-            art.video.playbackRate = originalPlaybackRate;
-            isLongPress = false;
-        }
-
-        if (longPressTimer) {
-            clearTimeout(longPressTimer);
-            longPressTimer = null;
-        }
-    });
-}
-
 // 清除视频进度记录
 function clearVideoProgress() {
     const progressKey = `videoProgress_${getVideoId()}`;
@@ -1341,18 +1042,6 @@ function getVideoId() {
         return `${encodeURIComponent(currentVideoUrl)}`;
     }
     return `${encodeURIComponent(currentVideoTitle)}_${currentEpisodeIndex}`;
-}
-
-let controlsLocked = false;
-function toggleControlsLock() {
-    const container = document.getElementById('playerContainer');
-    controlsLocked = !controlsLocked;
-    container.classList.toggle('controls-locked', controlsLocked);
-    const icon = document.getElementById('lockIcon');
-    // 切换图标：锁 / 解锁
-    icon.innerHTML = controlsLocked
-        ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d=\"M12 15v2m0-8V7a4 4 0 00-8 0v2m8 0H4v8h16v-8H6v-6z\"/>'
-        : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d=\"M15 11V7a3 3 0 00-6 0v4m-3 4h12v6H6v-6z\"/>';
 }
 
 // 支持在iframe中关闭播放器
