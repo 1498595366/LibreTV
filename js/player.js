@@ -379,13 +379,21 @@ function setupTouchGestures() {
 
     let startX = 0, startY = 0, mode = null, startValue = 0;
 
-    // 亮度数值提示：音量由 ArtPlayer 自带 toast 提示，亮度走 CSS 滤镜需自建居中徽标
-    let bHint = document.getElementById('brightnessHint');
+    // 统一调节数值徽标：音量、亮度共用同一个，保证位置一致且全屏可见。
+    // 徽标必须挂到播放器容器(#player)内，否则全屏时(全屏元素是播放器)会被藏掉。
+    // 同时隐藏 ArtPlayer 自带的音量数值(.art-volume-val)，避免同时出现两个数字。
+    if (!document.getElementById('adjustHintStyle')) {
+        const st = document.createElement('style');
+        st.id = 'adjustHintStyle';
+        st.textContent = '.art-volume-val{display:none !important}';
+        document.head.appendChild(st);
+    }
+    let bHint = document.getElementById('adjustHint');
     if (!bHint) {
         bHint = document.createElement('div');
-        bHint.id = 'brightnessHint';
-        bHint.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.65);color:#fff;font-size:20px;font-weight:600;padding:10px 20px;border-radius:8px;z-index:1000000;pointer-events:none;display:none;';
-        document.body.appendChild(bHint);
+        bHint.id = 'adjustHint';
+        bHint.style.cssText = 'position:absolute;right:24px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,0.65);color:#fff;font-size:20px;font-weight:600;padding:10px 20px;border-radius:8px;z-index:1000000;pointer-events:none;display:none;white-space:nowrap;';
+        container.appendChild(bHint);
     }
 
     container.addEventListener('touchstart', function (e) {
@@ -436,6 +444,10 @@ function setupTouchGestures() {
         } else if (mode === 'volume') {
             const v = Math.min(1, Math.max(0, startValue + (-dy / 150)));
             art.volume = v;
+            if (bHint) {
+                bHint.textContent = '音量 ' + Math.round(v * 100) + '%';
+                bHint.style.display = 'block';
+            }
         }
     }, { passive: false });
 
