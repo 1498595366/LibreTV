@@ -379,15 +379,6 @@ function setupTouchGestures() {
 
     let startX = 0, startY = 0, mode = null, startValue = 0;
 
-    // 亮度用黑色遮罩实现（网页层无法改系统屏幕亮度，只能做压暗模拟）
-    let overlay = document.getElementById('brightnessOverlay');
-    if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'brightnessOverlay';
-        overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;background:#000;opacity:0;pointer-events:none;z-index:10;';
-        container.appendChild(overlay);
-    }
-
     container.addEventListener('touchstart', function (e) {
         if (e.touches.length !== 1) return;
         const t = e.touches[0];
@@ -409,7 +400,9 @@ function setupTouchGestures() {
                 const half = container.clientWidth / 2;
                 if (t.clientX < half) {
                     mode = 'brightness';
-                    startValue = parseFloat(overlay.style.opacity) || 0;
+                    // 读取当前 CSS brightness，换算为“压暗量”（0 表示全亮）
+                    const m = (art.video.style.filter || '').match(/brightness\(([0-9.]+)\)/);
+                    startValue = 1 - (m ? parseFloat(m[1]) : 1);
                 } else {
                     mode = 'volume';
                     startValue = art.volume;
@@ -422,8 +415,12 @@ function setupTouchGestures() {
         if (mode) e.preventDefault(); // 阻止页面滚动
 
         if (mode === 'brightness') {
-            const v = Math.min(0.8, Math.max(0, startValue + (-dy / 150)));
-            overlay.style.opacity = v;
+            // 压暗量 0..0.8 映射到 CSS brightness 1..0.2，直接作用在视频元素上。
+            // 用 CSS 滤镜而非黑色遮罩：不受层叠/定位影响，浏览器与 Android WebView 都可靠生效。
+            const dark = Math.min(0.8, Math.max(0, startValue + (-dy / 150)));
+            try {
+                art.video.style.filter = 'brightness(' + (1 - dark).toFixed(2) + ')';
+            } catch (err) {}
         } else if (mode === 'volume') {
             const v = Math.min(1, Math.max(0, startValue + (-dy / 150)));
             art.volume = v;
