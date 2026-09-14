@@ -39,7 +39,9 @@ app.use(cors({
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
+  // 播放器通过同源 iframe 打开（见 app.js showVideoPlayer），DENY 会挡掉它；
+  // 用 SAMEORIGIN：允许同源 iframe，同时仍阻止跨域点击劫持嵌入。
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   next();
 });
