@@ -379,6 +379,15 @@ function setupTouchGestures() {
 
     let startX = 0, startY = 0, mode = null, startValue = 0;
 
+    // 亮度数值提示：音量由 ArtPlayer 自带 toast 提示，亮度走 CSS 滤镜需自建居中徽标
+    let bHint = document.getElementById('brightnessHint');
+    if (!bHint) {
+        bHint = document.createElement('div');
+        bHint.id = 'brightnessHint';
+        bHint.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.65);color:#fff;font-size:20px;font-weight:600;padding:10px 20px;border-radius:8px;z-index:1000000;pointer-events:none;display:none;';
+        document.body.appendChild(bHint);
+    }
+
     container.addEventListener('touchstart', function (e) {
         if (e.touches.length !== 1) return;
         const t = e.touches[0];
@@ -415,12 +424,15 @@ function setupTouchGestures() {
         if (mode) e.preventDefault(); // 阻止页面滚动
 
         if (mode === 'brightness') {
-            // 压暗量 0..0.8 映射到 CSS brightness 1..0.2，直接作用在视频元素上。
-            // 用 CSS 滤镜而非黑色遮罩：不受层叠/定位影响，浏览器与 Android WebView 都可靠生效。
-            const dark = Math.min(0.8, Math.max(0, startValue + (-dy / 150)));
+            // 上滑变亮、下滑变暗：dy 为负（上滑）→ dark 减小 → brightness 更大 → 更亮
+            const dark = Math.min(0.8, Math.max(0, startValue + (dy / 150)));
             try {
                 art.video.style.filter = 'brightness(' + (1 - dark).toFixed(2) + ')';
             } catch (err) {}
+            if (bHint) {
+                bHint.textContent = '亮度 ' + Math.round((1 - dark) * 100) + '%';
+                bHint.style.display = 'block';
+            }
         } else if (mode === 'volume') {
             const v = Math.min(1, Math.max(0, startValue + (-dy / 150)));
             art.volume = v;
@@ -430,6 +442,7 @@ function setupTouchGestures() {
     container.addEventListener('touchend', function () {
         mode = null;
         startValue = 0;
+        if (bHint) bHint.style.display = 'none';
     });
 }
 
