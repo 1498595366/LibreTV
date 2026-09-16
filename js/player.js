@@ -379,9 +379,8 @@ function setupTouchGestures() {
 
     let startX = 0, startY = 0, mode = null, startValue = 0;
 
-    // 统一调节数值徽标：音量、亮度共用同一个，保证位置一致且全屏可见。
-    // 徽标必须挂到播放器容器(#player)内，否则全屏时(全屏元素是播放器)会被藏掉。
-    // 同时隐藏 ArtPlayer 自带的音量数值(.art-volume-val)，避免同时出现两个数字。
+    // 统一调节数值徽标：音量、亮度共用同一个，都显示在播放器左上角。
+    // 隐藏 ArtPlayer 自带的音量数值(.art-volume-val)，避免出现两个数字。
     if (!document.getElementById('adjustHintStyle')) {
         const st = document.createElement('style');
         st.id = 'adjustHintStyle';
@@ -392,9 +391,21 @@ function setupTouchGestures() {
     if (!bHint) {
         bHint = document.createElement('div');
         bHint.id = 'adjustHint';
-        bHint.style.cssText = 'position:absolute;right:24px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,0.65);color:#fff;font-size:20px;font-weight:600;padding:10px 20px;border-radius:8px;z-index:1000000;pointer-events:none;display:none;white-space:nowrap;';
+        bHint.style.cssText = 'position:absolute;left:20px;top:16px;background:rgba(0,0,0,0.65);color:#fff;font-size:20px;font-weight:600;padding:10px 20px;border-radius:8px;z-index:1000000;pointer-events:none;display:none;white-space:nowrap;';
         container.appendChild(bHint);
     }
+
+    // 全屏时把徽标移进实际的全屏元素，保证全屏状态下也可见（左上角）
+    const reparentHint = () => {
+        const fe = document.fullscreenElement || document.webkitFullscreenElement || null;
+        if (fe && bHint && bHint.parentElement !== fe) {
+            fe.appendChild(bHint);
+        } else if (!fe && bHint && bHint.parentElement !== container) {
+            container.appendChild(bHint);
+        }
+    };
+    document.addEventListener('fullscreenchange', reparentHint);
+    document.addEventListener('webkitfullscreenchange', reparentHint);
 
     container.addEventListener('touchstart', function (e) {
         if (e.touches.length !== 1) return;
