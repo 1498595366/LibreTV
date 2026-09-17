@@ -88,6 +88,7 @@ let progressSaveInterval = null; // 定期保存进度的计时器
 let currentVideoUrl = ''; // 记录当前实际的视频URL
 let shortcutHintTimeout = null; // 用于控制快捷键提示显示时间
 const isWebkit = (typeof window.webkitConvertPointFromNodeToPage === 'function')
+const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Quark/i.test(navigator.userAgent)
 Artplayer.FULLSCREEN_WEB_IN_BODY = true;
 
 // 页面加载
@@ -391,7 +392,7 @@ function setupTouchGestures() {
     if (!bHint) {
         bHint = document.createElement('div');
         bHint.id = 'adjustHint';
-        bHint.style.cssText = 'position:absolute;left:20px;top:16px;background:rgba(0,0,0,0.65);color:#fff;font-size:20px;font-weight:600;padding:10px 20px;border-radius:8px;z-index:1000000;pointer-events:none;display:none;white-space:nowrap;';
+        bHint.style.cssText = 'position:absolute;left:12px;top:12px;background:rgba(0,0,0,0.65);color:#fff;font-size:14px;font-weight:600;padding:4px 8px;border-radius:4px;z-index:1000000;pointer-events:none;display:none;white-space:nowrap;';
         container.appendChild(bHint);
     }
 
@@ -520,16 +521,16 @@ function initPlayer(videoUrl) {
         isLive: false,
         muted: false,
         autoplay: true,
-        pip: false,
+        pip: true,
         autoSize: false,
         autoMini: false,
-        screenshot: false,
+        screenshot: true,
         setting: true,
         loop: false,
         flip: false,
         playbackRate: true,
         aspectRatio: false,
-        fullscreen: true,
+        fullscreen: !isMobileDevice,
         fullscreenWeb: true,
         subtitleOffset: false,
         miniProgressBar: true,
@@ -537,7 +538,8 @@ function initPlayer(videoUrl) {
         backdrop: true,
         playsInline: true,
         autoPlayback: false,
-        airplay: false,
+        airplay: true,
+        download: true,
         hotkey: false,
         theme: '#23ade5',
         lang: navigator.language.toLowerCase(),
@@ -585,6 +587,17 @@ function initPlayer(videoUrl) {
 
                 hls.loadSource(url);
                 hls.attachMedia(video);
+
+                // 保留浏览器/系统投屏能力：为 video 提供实际源地址
+                let sourceElement = video.querySelector('source');
+                if (sourceElement) {
+                    sourceElement.src = url;
+                } else {
+                    sourceElement = document.createElement('source');
+                    sourceElement.src = url;
+                    video.appendChild(sourceElement);
+                }
+                video.disableRemotePlayback = false;
 
                 // 暂停时不停止下载：让 hls.js 继续预缓存后续分片，
                 // 暂停期间缓冲在后台填充，恢复播放即可秒开（播放器层面的缓存预加载）。
@@ -920,6 +933,27 @@ function playNextEpisode() {
     if (currentEpisodeIndex < currentEpisodes.length - 1) {
         playEpisode(currentEpisodeIndex + 1);
     }
+}
+
+// 下载当前视频地址
+function downloadCurrentVideo() {
+    const videoUrl = currentVideoUrl || new URLSearchParams(window.location.search).get('url') || '';
+    if (!videoUrl) {
+        showToast('暂无可下载的视频地址', 'error');
+        return;
+    }
+
+    // m3u8 不能通过浏览器直接合并为 mp4；交给浏览器/夸克打开其下载流程，
+    // 对直接 mp4 等文件则使用 download 属性提示保存。
+    const link = document.createElement('a');
+    link.href = videoUrl;
+    link.download = '';
+    link.target = '_blank';
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    showToast('已打开下载地址', 'success');
 }
 
 // 复制播放链接
