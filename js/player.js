@@ -385,7 +385,9 @@ function setupTouchGestures() {
     if (!document.getElementById('adjustHintStyle')) {
         const st = document.createElement('style');
         st.id = 'adjustHintStyle';
-        st.textContent = '.art-volume-val{display:none !important}';
+        st.textContent = isMobileDevice
+            ? '.art-volume-panel,.art-setting-panel,.art-control-setting{display:none !important}.art-control-volume:hover .art-volume-panel{display:none !important}'
+            : '.art-volume-val{display:none !important}';
         document.head.appendChild(st);
     }
     let bHint = document.getElementById('adjustHint');
@@ -525,7 +527,7 @@ function initPlayer(videoUrl) {
         autoSize: false,
         autoMini: false,
         screenshot: true,
-        setting: true,
+        setting: !isMobileDevice,
         loop: false,
         flip: false,
         playbackRate: true,
@@ -903,11 +905,9 @@ function playEpisode(index) {
     currentUrl.searchParams.delete('position');
     window.history.replaceState({}, '', currentUrl.toString());
 
-    if (isWebkit) {
-        initPlayer(url);
-    } else {
-        art.switch = url;
-    }
+    // 移动端和夸克对 ArtPlayer.switch 的事件兼容性不一致，统一销毁并重建实例，
+    // 确保点击集数/下一集后真正切换 m3u8、重新绑定全屏和手势。
+    initPlayer(url);
 
     // 更新UI
     updateEpisodeInfo();
