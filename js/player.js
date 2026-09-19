@@ -539,6 +539,7 @@ function initPlayer(videoUrl) {
         aspectRatio: false,
         fullscreen: !isMobileDevice,
         fullscreenWeb: true,
+        autoOrientation: isMobileDevice,
         subtitleOffset: false,
         miniProgressBar: true,
         mutex: true,
