@@ -211,14 +211,14 @@
         <!-- 集数导航 -->
         <div class="player-container">
             <div class="flex justify-between items-center my-4">
-                <button onclick="playPreviousEpisode()" id="prevButton" class="px-4 py-2 bg-[#222] hover:bg-[#333] border border-[#333] rounded-lg transition-colors">
+                <button type="button" onclick="playPreviousEpisode()" id="prevButton" class="px-4 py-2 bg-[#222] hover:bg-[#333] border border-[#333] rounded-lg transition-colors">
                     <svg class="w-5 h-5 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
                     </svg>
                     上一集
                 </button>
                 <span class="text-gray-400" id="episodeInfo">加载中...</span>
-                <button onclick="playNextEpisode()" id="nextButton" class="px-4 py-2 bg-[#222] hover:bg-[#333] border border-[#333] rounded-lg transition-colors">
+                <button type="button" onclick="playNextEpisode()" id="nextButton" class="px-4 py-2 bg-[#222] hover:bg-[#333] border border-[#333] rounded-lg transition-colors">
                     下一集
                     <svg class="w-5 h-5 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
@@ -242,7 +242,7 @@
                 <!-- 把各种功能按钮放在右侧 - 在小屏幕上各自占一行 -->
                 <div class="flex flex-wrap justify-end gap-2">
                     <!-- 倒序排列按钮 -->
-                    <button onclick="toggleEpisodeOrder()" class="px-3 py-1 bg-[#222] hover:bg-[#333] border border-[#333] rounded-lg transition-colors flex items-center space-x-1 flex-shrink-0">
+                    <button type="button" onclick="toggleEpisodeOrder()" class="px-3 py-1 bg-[#222] hover:bg-[#333] border border-[#333] rounded-lg transition-colors flex items-center space-x-1 flex-shrink-0">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" id="orderIcon" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v3.586L7.707 9.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 10.586V7z" clip-rule="evenodd" />
                         </svg>

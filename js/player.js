@@ -87,6 +87,8 @@ let userClickedPosition = null; // 记录用户点击的位置
 let progressSaveInterval = null; // 定期保存进度的计时器
 let currentVideoUrl = ''; // 记录当前实际的视频URL
 let shortcutHintTimeout = null; // 用于控制快捷键提示显示时间
+let touchGestureCleanup = null;
+let fullscreenHintCleanup = null;
 const isWebkit = (typeof window.webkitConvertPointFromNodeToPage === 'function')
 const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Quark/i.test(navigator.userAgent)
 Artplayer.FULLSCREEN_WEB_IN_BODY = true;
@@ -378,10 +380,12 @@ function setupTouchGestures() {
     const container = document.getElementById('player');
     if (!container) return;
 
-    let startX = 0, startY = 0, mode = null, startValue = 0;
+    if (touchGestureCleanup) touchGestureCleanup();
+    if (fullscreenHintCleanup) fullscreenHintCleanup();
 
-    // 统一调节数值徽标：音量、亮度共用同一个，都显示在播放器左上角。
-    // 隐藏 ArtPlayer 自带的音量数值(.art-volume-val)，避免出现两个数字。
+    let startX = 0, startY = 0, mode = null, startValue = 0;
+    let bHint = document.getElementById('adjustHint');
+
     if (!document.getElementById('adjustHintStyle')) {
         const st = document.createElement('style');
         st.id = 'adjustHintStyle';
@@ -390,7 +394,6 @@ function setupTouchGestures() {
             : '.art-volume-val{display:none !important}';
         document.head.appendChild(st);
     }
-    let bHint = document.getElementById('adjustHint');
     if (!bHint) {
         bHint = document.createElement('div');
         bHint.id = 'adjustHint';
@@ -398,80 +401,80 @@ function setupTouchGestures() {
         container.appendChild(bHint);
     }
 
-    // 全屏时把徽标移进实际的全屏元素，保证全屏状态下也可见（左上角）
     const reparentHint = () => {
         const nativeFullscreen = document.fullscreenElement || document.webkitFullscreenElement || null;
         const webFullscreen = container.querySelector('.art-video-player.art-fullscreen-web, .art-video-player.art-fullscreen');
         const target = nativeFullscreen || webFullscreen || container;
         if (bHint && bHint.parentElement !== target) target.appendChild(bHint);
     };
-    document.addEventListener('fullscreenchange', reparentHint);
-    document.addEventListener('webkitfullscreenchange', reparentHint);
-    // ArtPlayer 的 fullscreenWeb 使用 CSS class，不会触发原生 fullscreenchange
+    const onFullscreenChange = () => reparentHint();
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', onFullscreenChange);
     const fullscreenObserver = new MutationObserver(reparentHint);
     fullscreenObserver.observe(container, { subtree: true, attributes: true, attributeFilter: ['class'] });
     reparentHint();
 
-    container.addEventListener('touchstart', function (e) {
+    const onTouchStart = (e) => {
         if (e.touches.length !== 1) return;
         const t = e.touches[0];
         startX = t.clientX;
         startY = t.clientY;
         mode = null;
         startValue = 0;
-    }, { passive: true });
-
-    container.addEventListener('touchmove', function (e) {
+    };
+    const onTouchMove = (e) => {
         if (e.touches.length !== 1) return;
         const t = e.touches[0];
         const dy = t.clientY - startY;
         const dx = t.clientX - startX;
 
-        // 只有纵向滑动占主导时才进入调节模式
         if (mode === null) {
-            if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx) * 1.3) {
-                const half = container.clientWidth / 2;
-                if (t.clientX < half) {
-                    mode = 'brightness';
-                    // 读取当前 CSS brightness，换算为“压暗量”（0 表示全亮）
-                    const m = (art.video.style.filter || '').match(/brightness\(([0-9.]+)\)/);
-                    startValue = 1 - (m ? parseFloat(m[1]) : 1);
-                } else {
-                    mode = 'volume';
-                    startValue = art.volume;
-                }
+            if (Math.abs(dy) <= 14 || Math.abs(dy) <= Math.abs(dx) * 1.3) return;
+            if (t.clientX < container.clientWidth / 2) {
+                mode = 'brightness';
+                const m = (art.video.style.filter || '').match(/brightness\(([0-9.]+)\)/);
+                startValue = 1 - (m ? parseFloat(m[1]) : 1);
             } else {
-                return;
+                mode = 'volume';
+                startValue = art.volume;
             }
         }
 
-        if (mode) e.preventDefault(); // 阻止页面滚动
-
+        e.preventDefault();
         if (mode === 'brightness') {
-            // 上滑变亮、下滑变暗：dy 为负（上滑）→ dark 减小 → brightness 更大 → 更亮
             const dark = Math.min(0.8, Math.max(0, startValue + (dy / 150)));
-            try {
-                art.video.style.filter = 'brightness(' + (1 - dark).toFixed(2) + ')';
-            } catch (err) {}
-            if (bHint) {
-                bHint.textContent = '亮度 ' + Math.round((1 - dark) * 100) + '%';
-                bHint.style.display = 'block';
-            }
-        } else if (mode === 'volume') {
+            art.video.style.filter = 'brightness(' + (1 - dark).toFixed(2) + ')';
+            bHint.textContent = '亮度 ' + Math.round((1 - dark) * 100) + '%';
+            bHint.style.display = 'block';
+        } else {
             const v = Math.min(1, Math.max(0, startValue + (-dy / 150)));
             art.volume = v;
-            if (bHint) {
-                bHint.textContent = '音量 ' + Math.round(v * 100) + '%';
-                bHint.style.display = 'block';
-            }
+            bHint.textContent = '音量 ' + Math.round(v * 100) + '%';
+            bHint.style.display = 'block';
         }
-    }, { passive: false });
-
-    container.addEventListener('touchend', function () {
+    };
+    const onTouchEnd = () => {
         mode = null;
         startValue = 0;
         if (bHint) bHint.style.display = 'none';
-    });
+    };
+
+    container.addEventListener('touchstart', onTouchStart, { passive: true });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', onTouchEnd);
+    container.addEventListener('touchcancel', onTouchEnd);
+
+    touchGestureCleanup = () => {
+        container.removeEventListener('touchstart', onTouchStart);
+        container.removeEventListener('touchmove', onTouchMove);
+        container.removeEventListener('touchend', onTouchEnd);
+        container.removeEventListener('touchcancel', onTouchEnd);
+    };
+    fullscreenHintCleanup = () => {
+        document.removeEventListener('fullscreenchange', onFullscreenChange);
+        document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
+        fullscreenObserver.disconnect();
+    };
 }
 
 // 初始化播放器
@@ -671,12 +674,10 @@ function initPlayer(videoUrl) {
 
     // 全屏模式处理
     art.on('fullscreen', function () {
-        if (window.screen.orientation && window.screen.orientation.lock) {
-            window.screen.orientation.lock('landscape')
-                .then(() => {
-                })
-                .catch((error) => {
-                });
+        if (isMobileDevice && window.screen.orientation && window.screen.orientation.lock) {
+            window.screen.orientation.lock('landscape').catch(() => {});
+        } else if (!isMobileDevice && window.screen.orientation && window.screen.orientation.lock) {
+            window.screen.orientation.lock('landscape').catch(() => {});
         }
     });
 
