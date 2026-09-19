@@ -400,15 +400,17 @@ function setupTouchGestures() {
 
     // 全屏时把徽标移进实际的全屏元素，保证全屏状态下也可见（左上角）
     const reparentHint = () => {
-        const fe = document.fullscreenElement || document.webkitFullscreenElement || null;
-        if (fe && bHint && bHint.parentElement !== fe) {
-            fe.appendChild(bHint);
-        } else if (!fe && bHint && bHint.parentElement !== container) {
-            container.appendChild(bHint);
-        }
+        const nativeFullscreen = document.fullscreenElement || document.webkitFullscreenElement || null;
+        const webFullscreen = container.querySelector('.art-video-player.art-fullscreen-web, .art-video-player.art-fullscreen');
+        const target = nativeFullscreen || webFullscreen || container;
+        if (bHint && bHint.parentElement !== target) target.appendChild(bHint);
     };
     document.addEventListener('fullscreenchange', reparentHint);
     document.addEventListener('webkitfullscreenchange', reparentHint);
+    // ArtPlayer 的 fullscreenWeb 使用 CSS class，不会触发原生 fullscreenchange
+    const fullscreenObserver = new MutationObserver(reparentHint);
+    fullscreenObserver.observe(container, { subtree: true, attributes: true, attributeFilter: ['class'] });
+    reparentHint();
 
     container.addEventListener('touchstart', function (e) {
         if (e.touches.length !== 1) return;
