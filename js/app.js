@@ -825,8 +825,9 @@ async function search() {
             const hasCover = item.vod_pic && item.vod_pic.startsWith('http');
             
             return `
-                <div class="card-hover bg-[#111] rounded-lg overflow-hidden cursor-pointer transition-all hover:scale-[1.02] h-full shadow-sm hover:shadow-md" 
-                     onclick="showDetails('${safeId}','${safeName}','${sourceCode}')" ${apiUrlAttr}>
+                <a href="?detailId=${encodeURIComponent(safeId)}&detailName=${encodeURIComponent(item.vod_name || '')}&detailSource=${encodeURIComponent(sourceCode)}"
+                   class="card-hover bg-[#111] rounded-lg overflow-hidden cursor-pointer transition-all hover:scale-[1.02] h-full shadow-sm hover:shadow-md block"
+                   onclick="event.preventDefault(); showDetails('${safeId}','${safeName}','${sourceCode}')" ${apiUrlAttr}>
                     <div class="flex h-full">
                         ${hasCover ? `
                         <div class="relative flex-shrink-0 search-card-img-container">
@@ -871,7 +872,7 @@ async function search() {
                             </div>
                         </div>
                     </div>
-                </div>
+                </a>
             `;
         }).join('');
         

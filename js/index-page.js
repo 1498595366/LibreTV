@@ -58,7 +58,18 @@ document.addEventListener('DOMContentLoaded', function() {
     // 也检查查询字符串中的搜索参数 (格式: ?s=keyword)
     const urlParams = new URLSearchParams(window.location.search);
     const searchQuery = urlParams.get('s');
-    
+
+    // 新标签页打开搜索结果时，直接显示该视频详情
+    const detailId = urlParams.get('detailId');
+    const detailName = urlParams.get('detailName');
+    const detailSource = urlParams.get('detailSource');
+    if (detailId && detailName && detailSource && typeof showDetails === 'function') {
+        setTimeout(() => {
+            showDetails(detailId, detailName, detailSource);
+        }, 300);
+        return;
+    }
+
     if (searchQuery) {
         // 设置搜索框的值
         document.getElementById('searchInput').value = searchQuery;
